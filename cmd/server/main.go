@@ -11,22 +11,31 @@ import (
 )
 
 func main() {
-	const connectionUrl = "amqp://guest:guest@localhost:5672/"
+	const rabbitConnString = "amqp://guest:guest@localhost:5672/"
 
-	fmt.Println("Starting Peril server...")
-
-	connection, err := amqp.Dial(connectionUrl)
+	conn, err := amqp.Dial(rabbitConnString)
 	if err != nil {
 		log.Fatalf("could not connect to RabbitMQ: %v", err)
 	}
-	defer connection.Close()
+	defer conn.Close()
 	fmt.Println("Peril game server connected to RabbitMQ!")
 
-	ch, err := connection.Channel()
+	publishCh, err := conn.Channel()
 	if err != nil {
-		log.Fatalf("Failed to create a channel on the RabbitMQ connection: %v", err)
+		log.Fatalf("could not create channel: %v", err)
 	}
-	defer ch.Close()
+
+	_, queue, err := pubsub.DeclareAndBind(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.SimpleQueueDurable,
+	)
+	if err != nil {
+		log.Fatalf("could not subscribe to pause: %v", err)
+	}
+	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
 
 	gamelogic.PrintServerHelp()
 
@@ -35,25 +44,38 @@ func main() {
 		if len(words) == 0 {
 			continue
 		}
-
 		switch words[0] {
 		case "pause":
-			fmt.Println("Sending pause message to the queue")
-			pubsub.PublishJSON(ch, routing.ExchangePerilDirect, routing.PauseKey, routing.PlayingState{
-				IsPaused: true,
-			})
+			fmt.Println("Publishing paused game state")
+			err = pubsub.PublishJSON(
+				publishCh,
+				routing.ExchangePerilDirect,
+				routing.PauseKey,
+				routing.PlayingState{
+					IsPaused: true,
+				},
+			)
+			if err != nil {
+				log.Printf("could not publish time: %v", err)
+			}
 		case "resume":
-			fmt.Println("Sending a resume message")
-			pubsub.PublishJSON(ch, routing.ExchangePerilDirect, routing.PauseKey, routing.PlayingState{
-				IsPaused: false,
-			})
+			fmt.Println("Publishing resumes game state")
+			err = pubsub.PublishJSON(
+				publishCh,
+				routing.ExchangePerilDirect,
+				routing.PauseKey,
+				routing.PlayingState{
+					IsPaused: false,
+				},
+			)
+			if err != nil {
+				log.Printf("could not publish time: %v", err)
+			}
 		case "quit":
-			fmt.Println("Shuttig down!")
+			log.Println("goodbye")
 			return
 		default:
-			fmt.Printf("Unkown command: %s\n", words[0])
-
+			fmt.Println("unknown command")
 		}
 	}
-
 }

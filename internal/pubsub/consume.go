@@ -1,8 +1,9 @@
 package pubsub
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
+	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -16,6 +17,12 @@ const (
 	SimpleQueueTransient
 )
 
+const (
+	Ack Acktype = iota
+	NackRequeue
+	NackDiscard
+)
+
 func DeclareAndBind(
 	conn *amqp.Connection,
 	exchange,
@@ -23,34 +30,82 @@ func DeclareAndBind(
 	key string,
 	queueType SimpleQueueType,
 ) (*amqp.Channel, amqp.Queue, error) {
-
-	if conn == nil {
-		return nil, amqp.Queue{}, errors.New("connection is nil")
-	}
-
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, amqp.Queue{}, fmt.Errorf("failed to create channel on connection: %v", err)
+		return nil, amqp.Queue{}, fmt.Errorf("could not create channel: %v", err)
 	}
 
 	queue, err := ch.QueueDeclare(
-		queueName,
-		queueType == SimpleQueueDurable,
-		queueType != SimpleQueueDurable,
-		queueType != SimpleQueueDurable,
-		false,
-		nil,
+		queueName,                       // name
+		queueType == SimpleQueueDurable, // durable
+		queueType != SimpleQueueDurable, // delete when unused
+		queueType != SimpleQueueDurable, // exclusive
+		false,                           // no-wait
+		nil,                             // args
 	)
-
 	if err != nil {
-		return nil, amqp.Queue{}, fmt.Errorf("failed to create the queue: %v", err)
+		return nil, amqp.Queue{}, fmt.Errorf("could not declare queue: %v", err)
 	}
 
-	err = ch.QueueBind(queue.Name, key, exchange, false, nil)
-
+	err = ch.QueueBind(
+		queue.Name, // queue name
+		key,        // routing key
+		exchange,   // exchange
+		false,      // no-wait
+		nil,        // args
+	)
 	if err != nil {
-		return nil, amqp.Queue{}, fmt.Errorf("failed to bind queue: %v", err)
+		return nil, amqp.Queue{}, fmt.Errorf("could not bind queue: %v", err)
 	}
-
 	return ch, queue, nil
+}
+
+func SubscribeJSON[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T) Acktype,
+) error {
+	ch, _, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+
+	if err != nil {
+		return err
+	}
+
+	consumer, err := ch.Consume(queueName, "", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		var result T
+		defer ch.Close()
+		for value := range consumer {
+			if err := json.Unmarshal(value.Body, &result); err == nil {
+				ackCode := handler(result)
+
+				switch ackCode {
+				case Ack:
+					value.Ack(false)
+					log.Default().Printf("Obtained Ack from %v queue", queueName)
+				case NackRequeue:
+					value.Nack(false, true)
+					log.Default().Printf("Obtained NackRequeue from %v queue", queueName)
+				case NackDiscard:
+					value.Nack(false, false)
+					log.Default().Printf("Obtained NackDiscard from %v queue", queueName)
+				default:
+					value.Reject(false)
+				}
+
+				value.Ack(false)
+			} else {
+				value.Reject(false)
+			}
+		}
+	}()
+
+	return nil
 }
