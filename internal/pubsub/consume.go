@@ -23,6 +23,9 @@ const (
 	NackDiscard
 )
 
+const DLQ_HEADER = "x-dead-letter-exchange"
+const DLQ_EXHANGE = "peril_dlx"
+
 func DeclareAndBind(
 	conn *amqp.Connection,
 	exchange,
@@ -35,13 +38,17 @@ func DeclareAndBind(
 		return nil, amqp.Queue{}, fmt.Errorf("could not create channel: %v", err)
 	}
 
+	args := amqp.Table{
+		DLQ_HEADER: DLQ_EXHANGE,
+	}
+
 	queue, err := ch.QueueDeclare(
 		queueName,                       // name
 		queueType == SimpleQueueDurable, // durable
 		queueType != SimpleQueueDurable, // delete when unused
 		queueType != SimpleQueueDurable, // exclusive
 		false,                           // no-wait
-		nil,                             // args
+		args,                            // args
 	)
 	if err != nil {
 		return nil, amqp.Queue{}, fmt.Errorf("could not declare queue: %v", err)
