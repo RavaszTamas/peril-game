@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -21,6 +20,10 @@ func main() {
 	}
 	defer conn.Close()
 	fmt.Println("Peril game client connected to RabbitMQ!")
+
+	if err := pubsub.DeclareExchanges(conn); err != nil {
+		log.Fatalf("could not declare exchanges: %v", err)
+	}
 
 	publishCh, err := conn.Channel()
 	if err != nil {
@@ -111,17 +114,4 @@ func main() {
 			fmt.Println("unknown command")
 		}
 	}
-}
-
-func publishGameLog(publishCh *amqp.Channel, username, msg string) error {
-	return pubsub.PublishGob(
-		publishCh,
-		routing.ExchangePerilTopic,
-		routing.GameLogSlug+"."+username,
-		routing.GameLog{
-			Username:    username,
-			CurrentTime: time.Now(),
-			Message:     msg,
-		},
-	)
 }

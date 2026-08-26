@@ -20,22 +20,27 @@ func main() {
 	defer conn.Close()
 	fmt.Println("Peril game server connected to RabbitMQ!")
 
+	if err := pubsub.DeclareExchanges(conn); err != nil {
+		log.Fatalf("could not declare exchanges: %v", err)
+	}
+
 	publishCh, err := conn.Channel()
 	if err != nil {
 		log.Fatalf("could not create channel: %v", err)
 	}
 
-	_, queue, err := pubsub.DeclareAndBind(
+	err = pubsub.SubscribeGob(
 		conn,
 		routing.ExchangePerilTopic,
 		routing.GameLogSlug,
 		routing.GameLogSlug+".*",
 		pubsub.SimpleQueueDurable,
+		handleLog(),
 	)
 	if err != nil {
-		log.Fatalf("could not subscribe to pause: %v", err)
+		log.Fatalf("could not subscribe to game logs: %v", err)
 	}
-	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
+	fmt.Printf("Queue %v declared and bound!\n", routing.GameLogSlug)
 
 	gamelogic.PrintServerHelp()
 
